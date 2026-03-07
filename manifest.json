@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Folders",
+  "version": "0.1",
+  "description": "Cria pastas para organizar os chats do Gemini.",
+  "permissions": [
+    "storage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "index.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
