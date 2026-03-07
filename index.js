@@ -2,8 +2,8 @@
   'use strict';
 
   let openFolder = null;
-  let isSet = false;
   let cacheMappings = {};
+  let currentDraggedChat = null;
 
   chrome.storage.local.get(["gemini_folders_state"], (result) => {
     cacheMappings = result.gemini_folders_state?.chatMappings || {};
@@ -34,22 +34,79 @@
     newFolder.id = id;
     newFolder.isOpen = false;
     newFolder.classList.add("folder-item");
+    newFolder.style.position = "relative";
 
     const titleNode = newFolder.querySelector(".title-container");
     titleNode.textContent = name;
+    titleNode.style.paddingRight = "30px";
+    titleNode.style.overflow = "hidden";
+    titleNode.style.textOverflow = "ellipsis";
+    titleNode.style.whiteSpace = "nowrap";
 
     const iconElement = newFolder.querySelector(".mat-icon");
     if (iconElement) iconElement.textContent = "folder";
+
+    const deleteBtn = document.createElement("span");
+    deleteBtn.className = "mat-icon notranslate google-symbols mat-ligature-font";
+    deleteBtn.textContent = "delete";
+    deleteBtn.style.position = "absolute";
+    deleteBtn.style.right = "8px";
+    deleteBtn.style.top = "50%";
+    deleteBtn.style.transform = "translateY(-50%)";
+    deleteBtn.style.fontSize = "18px";
+    deleteBtn.style.color = "#c4c7c5";
+    deleteBtn.style.opacity = "0";
+    deleteBtn.style.transition = "all 0.2s";
+    deleteBtn.style.zIndex = "10";
+    deleteBtn.style.display = "flex";
+    deleteBtn.style.alignItems = "center";
+    deleteBtn.style.justifyContent = "center";
+    deleteBtn.style.width = "28px";
+    deleteBtn.style.height = "28px";
+    deleteBtn.style.borderRadius = "50%";
+
+    newFolder.appendChild(deleteBtn);
+
+    newFolder.addEventListener("mouseenter", () => deleteBtn.style.opacity = "1");
+    newFolder.addEventListener("mouseleave", () => deleteBtn.style.opacity = "0");
+
+    deleteBtn.addEventListener("mouseenter", () => {
+      deleteBtn.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+      deleteBtn.style.color = "#ff5c5c";
+    });
+
+    deleteBtn.addEventListener("mouseleave", () => {
+      deleteBtn.style.backgroundColor = "transparent";
+      deleteBtn.style.color = "#c4c7c5";
+    });
+
+    deleteBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      document.querySelectorAll(".conversation-items-container").forEach(chat => {
+        if (chat.dataset.folder === newFolder.id) {
+          delete chat.dataset.folder;
+          chat.style.display = "flex";
+        }
+      });
+
+      if (openFolder === newFolder) openFolder = null;
+      newFolder.remove();
+      saveState();
+    });
 
     titleNode.addEventListener("dblclick", (e) => {
       e.stopPropagation();
       titleNode.contentEditable = true;
       titleNode.focus();
       titleNode.style.outline = "1px solid white";
+      titleNode.style.paddingRight = "5px";
 
       const finishEdit = () => {
         titleNode.contentEditable = false;
         titleNode.style.outline = "none";
+        titleNode.style.paddingRight = "30px";
         saveState();
       };
 
@@ -74,12 +131,18 @@
     newFolder.addEventListener("drop", (e) => {
       e.preventDefault();
       newFolder.style.backgroundColor = "transparent";
+
       const chatId = e.dataTransfer.getData('text/plain');
       const chatElement = document.getElementById(chatId);
 
       if (chatElement) {
-        chatElement.style.display = "none";
-        chatElement.dataset.folder = newFolder.id;
+        if (chatElement.dataset.folder === newFolder.id) {
+          delete chatElement.dataset.folder;
+          chatElement.style.display = "none";
+        } else {
+          chatElement.dataset.folder = newFolder.id;
+          chatElement.style.display = newFolder.isOpen ? "flex" : "none";
+        }
         saveState();
       }
     });
@@ -142,10 +205,34 @@
       chat.addEventListener('dragstart', (e) => {
         chat.style.opacity = '0.4';
         e.dataTransfer.setData("text/plain", chat.id);
+        currentDraggedChat = chat;
+
+        if (chat.dataset.folder) {
+          const parentFolder = document.getElementById(chat.dataset.folder);
+          if (parentFolder) {
+            const currentIcon = parentFolder.querySelector(".mat-icon");
+            if (currentIcon) {
+              currentIcon.textContent = "close";
+              currentIcon.style.color = "#ff5c5c";
+            }
+          }
+        }
       });
 
       chat.addEventListener('dragend', () => {
         chat.style.opacity = '1';
+
+        if (currentDraggedChat && currentDraggedChat.dataset.folder) {
+          const parentFolder = document.getElementById(currentDraggedChat.dataset.folder);
+          if (parentFolder) {
+            const currentIcon = parentFolder.querySelector(".mat-icon");
+            if (currentIcon) {
+              currentIcon.textContent = parentFolder.isOpen ? "folder_open" : "folder";
+              currentIcon.style.color = "";
+            }
+          }
+        }
+        currentDraggedChat = null;
       });
     });
   };
@@ -153,51 +240,55 @@
   const putborder = () => {
     makeDraggable();
     const el = document.querySelector(".gems-list-container");
+    const items = document.querySelector(".side-nav-entry-container");
+    const cvs = document.querySelector(".title-container.ng-trigger");
 
-    if (!isSet && el) {
-      const items = document.querySelector(".side-nav-entry-container");
-      const cvs = document.querySelector(".title-container.ng-trigger");
+    if (!el || !items || !cvs) return;
+    if (document.getElementById("custom-folder-list")) return;
 
-      const btnNewFolder = items.cloneNode(true);
-      btnNewFolder.querySelector(".title-container").textContent = "New folder";
-      const iconContainer = btnNewFolder.querySelector(".mat-icon").parentElement;
-      iconContainer.textContent = "";
-      const icon = document.createElement("span");
-      icon.className = "mat-icon notranslate google-symbols mat-ligature-font material-icons-outlined";
-      icon.textContent = "create_new_folder";
-      iconContainer.appendChild(icon);
+    const existingBtn = document.getElementById("custom-new-folder-btn");
+    if (existingBtn) existingBtn.remove();
 
-      const folderSkeleton = btnNewFolder.cloneNode(true);
+    const btnNewFolder = items.cloneNode(true);
+    btnNewFolder.id = "custom-new-folder-btn";
+    btnNewFolder.querySelector(".title-container").textContent = "New folder";
+    const iconContainer = btnNewFolder.querySelector(".mat-icon").parentElement;
+    iconContainer.textContent = "";
+    const icon = document.createElement("span");
+    icon.className = "mat-icon notranslate google-symbols mat-ligature-font material-icons-outlined";
+    icon.textContent = "create_new_folder";
+    iconContainer.appendChild(icon);
 
-      const folderSpace = cvs.cloneNode(true);
-      folderSpace.querySelector("h1").textContent = "Folders";
-      const folderList = document.createElement("div");
-      folderList.id = "custom-folder-list";
-      folderSpace.appendChild(folderList);
+    const folderSkeleton = btnNewFolder.cloneNode(true);
+    folderSkeleton.removeAttribute("id");
 
-      chrome.storage.local.get(["gemini_folders_state"], (result) => {
-        const state = result.gemini_folders_state;
-        if (state?.folders) {
-          state.folders.forEach(f => {
-            const restored = createFolderUI(f.id, f.name, folderSkeleton, folderList);
-            folderList.appendChild(restored);
-          });
-        }
-      });
+    const folderSpace = cvs.cloneNode(true);
+    folderSpace.querySelector("h1").textContent = "Folders";
+    const folderList = document.createElement("div");
+    folderList.id = "custom-folder-list";
+    folderSpace.appendChild(folderList);
 
-      btnNewFolder.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const id = 'folder-' + Math.random().toString(36).substr(2, 9);
-        const newF = createFolderUI(id, "New Folder", folderSkeleton, folderList);
-        folderList.appendChild(newF);
-        saveState();
-      });
+    chrome.storage.local.get(["gemini_folders_state"], (result) => {
+      const state = result.gemini_folders_state;
+      if (state?.folders) {
+        state.folders.forEach(f => {
+          const restored = createFolderUI(f.id, f.name, folderSkeleton, folderList);
+          folderList.appendChild(restored);
+        });
+      }
+    });
 
-      el.insertAdjacentElement("beforebegin", btnNewFolder);
-      el.insertAdjacentElement("afterend", folderSpace);
-      isSet = true;
-    }
+    btnNewFolder.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = 'folder-' + Math.random().toString(36).substr(2, 9);
+      const newF = createFolderUI(id, "New Folder", folderSkeleton, folderList);
+      folderList.appendChild(newF);
+      saveState();
+    });
+
+    el.insertAdjacentElement("beforebegin", btnNewFolder);
+    el.insertAdjacentElement("afterend", folderSpace);
   };
 
   const obs = new MutationObserver(putborder);
