@@ -3,6 +3,11 @@
 
   let openFolder = null;
   let isSet = false;
+  let cacheMappings = {};
+
+  chrome.storage.local.get(["gemini_folders_state"], (result) => {
+    cacheMappings = result.gemini_folders_state?.chatMappings || {};
+  });
 
   const saveState = () => {
     const state = { folders: [], chatMappings: {} };
@@ -20,6 +25,7 @@
       }
     });
 
+    cacheMappings = state.chatMappings;
     chrome.storage.local.set({ "gemini_folders_state": state });
   };
 
@@ -35,7 +41,6 @@
     const iconElement = newFolder.querySelector(".mat-icon");
     if (iconElement) iconElement.textContent = "folder";
 
-    // Evento: Renomear (Double Click)
     titleNode.addEventListener("dblclick", (e) => {
       e.stopPropagation();
       titleNode.contentEditable = true;
@@ -50,7 +55,10 @@
 
       titleNode.addEventListener("blur", finishEdit, { once: true });
       titleNode.addEventListener("keydown", (ek) => {
-        if (ek.key === "Enter") { ek.preventDefault(); finishEdit(); }
+        if (ek.key === "Enter") {
+          ek.preventDefault();
+          finishEdit();
+        }
       });
     });
 
@@ -94,7 +102,6 @@
         if (newFolder.isOpen) {
           chat.style.display = (chat.dataset.folder === newFolder.id) ? "flex" : "none";
         } else {
-          // Volta ao estado normal: esconde o que tem pasta, mostra o que não tem
           chat.style.display = chat.dataset.folder ? "none" : "flex";
         }
       });
@@ -104,30 +111,41 @@
   };
 
   const makeDraggable = () => {
-    chrome.storage.local.get(["gemini_folders_state"], (result) => {
-      const mapping = result.gemini_folders_state?.chatMappings || {};
-      const chats = document.querySelectorAll(".conversation-items-container");
+    const chats = document.querySelectorAll(".conversation-items-container");
 
-      chats.forEach((chat) => {
-        if (chat.config) return;
+    chats.forEach((chat) => {
+      if (chat.config) return;
 
-        if (!chat.id) chat.id = "chat-" + Math.random().toString(36).substr(2, 9);
-
-        if (mapping[chat.id]) {
-          chat.dataset.folder = mapping[chat.id];
-          // Se não houver pasta aberta, chats com pasta devem começar escondidos
-          if (!openFolder) chat.style.display = "none";
+      if (!chat.id) {
+        let link = chat.querySelector('a');
+        if (link && link.href) {
+          let match = link.href.match(/\/app\/([a-z0-9]+)/);
+          chat.id = match ? "chat-" + match[1] : "chat-" + Math.random().toString(36).substr(2, 9);
+        } else {
+          chat.id = "chat-" + Math.random().toString(36).substr(2, 9);
         }
+      }
 
-        chat.draggable = true;
-        chat.config = true;
+      if (cacheMappings[chat.id]) {
+        chat.dataset.folder = cacheMappings[chat.id];
+      }
 
-        chat.addEventListener('dragstart', (e) => {
-          chat.style.opacity = '0.4';
-          e.dataTransfer.setData("text/plain", chat.id);
-        });
+      if (openFolder) {
+        chat.style.display = (chat.dataset.folder === openFolder.id) ? "flex" : "none";
+      } else {
+        chat.style.display = chat.dataset.folder ? "none" : "flex";
+      }
 
-        chat.addEventListener('dragend', () => { chat.style.opacity = '1'; });
+      chat.draggable = true;
+      chat.config = true;
+
+      chat.addEventListener('dragstart', (e) => {
+        chat.style.opacity = '0.4';
+        e.dataTransfer.setData("text/plain", chat.id);
+      });
+
+      chat.addEventListener('dragend', () => {
+        chat.style.opacity = '1';
       });
     });
   };
@@ -145,7 +163,7 @@
       const iconContainer = btnNewFolder.querySelector(".mat-icon").parentElement;
       iconContainer.textContent = "";
       const icon = document.createElement("span");
-      icon.className = "mat-icon notranslate google-symbols mat-ligature-font";
+      icon.className = "mat-icon notranslate google-symbols mat-ligature-font material-icons-outlined";
       icon.textContent = "create_new_folder";
       iconContainer.appendChild(icon);
 
@@ -154,7 +172,7 @@
       const folderSpace = cvs.cloneNode(true);
       folderSpace.querySelector("h1").textContent = "Folders";
       const folderList = document.createElement("div");
-      folderList.id = "lista-de-pastas-custom";
+      folderList.id = "custom-folder-list";
       folderSpace.appendChild(folderList);
 
       chrome.storage.local.get(["gemini_folders_state"], (result) => {
@@ -171,7 +189,7 @@
         e.preventDefault();
         e.stopPropagation();
         const id = 'folder-' + Math.random().toString(36).substr(2, 9);
-        const newF = createFolderUI(id, "Nova Pasta", folderSkeleton, folderList);
+        const newF = createFolderUI(id, "New Folder", folderSkeleton, folderList);
         folderList.appendChild(newF);
         saveState();
       });
