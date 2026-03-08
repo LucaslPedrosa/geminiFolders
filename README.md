@@ -18,5 +18,6 @@ Open Chrome and go to: chrome://extensions
 Enable Developer Mode
 Click Load unpacked and select the project folder.
 
-[https://github.com/user-attachments/assets/db74d6dd-c3d7-4cd9-8b9f-c9563bd026fc
+[
+https://github.com/user-attachments/assets/db74d6dd-c3d7-4cd9-8b9f-c9563bd026fc
 ]
