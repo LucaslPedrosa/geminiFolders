@@ -23,5 +23,16 @@ Download and extract the ZIP or clone this repository to your local machine.
 
 ---
 
+## How to use in
+
+To create folders simply click the "Create Folder" button, and start dragging your Gemini AI chats into it. You can create as many folders as you like to keep your conversations organized.
+
+To rename folders double click them
+
+To remove a chat from a folder, simply drag it back to the same folder
+
+### With / Without the extension
+
+
 ## 📄 License
 This project is under the [MIT License](LICENSE).
