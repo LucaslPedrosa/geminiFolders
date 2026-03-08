@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Gemini Folders",
-  "version": "0.1",
-  "description": "Cria pastas para organizar os chats do Gemini.",
+  "version": "1.0",
+  "description": "Create folders in Gemini to organize your conversations.",
   "permissions": [
     "storage"
   ],
