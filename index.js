@@ -2,12 +2,8 @@
   'use strict';
 
   let openFolder = null;
-  let cacheMappings = {};
   let currentDraggedChat = null;
-
-  chrome.storage.local.get(["gemini_folders_state"], (result) => {
-    cacheMappings = result.gemini_folders_state?.chatMappings || {};
-  });
+  let appState = { folders: [], chatMappings: {} };
 
   const saveState = () => {
     const state = { folders: [], chatMappings: {} };
@@ -25,7 +21,7 @@
       }
     });
 
-    cacheMappings = state.chatMappings;
+    appState = state;
     chrome.storage.local.set({ "gemini_folders_state": state });
   };
 
@@ -96,17 +92,23 @@
       saveState();
     });
 
+    let clickTimer = null;
+
     titleNode.addEventListener("dblclick", (e) => {
       e.stopPropagation();
+      clearTimeout(clickTimer);
+
       titleNode.contentEditable = true;
       titleNode.focus();
       titleNode.style.outline = "1px solid white";
       titleNode.style.paddingRight = "5px";
+      titleNode.style.cursor = "text";
 
       const finishEdit = () => {
         titleNode.contentEditable = false;
         titleNode.style.outline = "none";
         titleNode.style.paddingRight = "30px";
+        titleNode.style.cursor = "pointer";
         saveState();
       };
 
@@ -151,23 +153,29 @@
       e.preventDefault();
       e.stopPropagation();
 
-      newFolder.isOpen = !newFolder.isOpen;
-      iconElement.textContent = newFolder.isOpen ? "folder_open" : "folder";
+      if (titleNode.contentEditable === "true") return;
 
-      if (newFolder.isOpen && openFolder && openFolder !== newFolder) {
-        openFolder.isOpen = false;
-        const oldIcon = openFolder.querySelector(".mat-icon");
-        if (oldIcon) oldIcon.textContent = "folder";
+      if (e.detail === 1) {
+        clickTimer = setTimeout(() => {
+          newFolder.isOpen = !newFolder.isOpen;
+          iconElement.textContent = newFolder.isOpen ? "folder_open" : "folder";
+
+          if (newFolder.isOpen && openFolder && openFolder !== newFolder) {
+            openFolder.isOpen = false;
+            const oldIcon = openFolder.querySelector(".mat-icon");
+            if (oldIcon) oldIcon.textContent = "folder";
+          }
+          openFolder = newFolder.isOpen ? newFolder : null;
+
+          document.querySelectorAll(".conversation-items-container").forEach((chat) => {
+            if (newFolder.isOpen) {
+              chat.style.display = (chat.dataset.folder === newFolder.id) ? "flex" : "none";
+            } else {
+              chat.style.display = chat.dataset.folder ? "none" : "flex";
+            }
+          });
+        }, 200);
       }
-      openFolder = newFolder.isOpen ? newFolder : null;
-
-      document.querySelectorAll(".conversation-items-container").forEach((chat) => {
-        if (newFolder.isOpen) {
-          chat.style.display = (chat.dataset.folder === newFolder.id) ? "flex" : "none";
-        } else {
-          chat.style.display = chat.dataset.folder ? "none" : "flex";
-        }
-      });
     });
 
     return newFolder;
@@ -189,8 +197,8 @@
         }
       }
 
-      if (cacheMappings[chat.id]) {
-        chat.dataset.folder = cacheMappings[chat.id];
+      if (appState.chatMappings[chat.id]) {
+        chat.dataset.folder = appState.chatMappings[chat.id];
       }
 
       if (openFolder) {
@@ -238,12 +246,10 @@
   };
 
   const putborder = () => {
-    makeDraggable();
     const el = document.querySelector(".gems-list-container");
     const items = document.querySelector(".side-nav-entry-container");
-    const cvs = document.querySelector(".title-container.ng-trigger");
 
-    if (!el || !items || !cvs) return;
+    if (!el || !items) return;
     if (document.getElementById("custom-folder-list")) return;
 
     const existingBtn = document.getElementById("custom-new-folder-btn");
@@ -252,6 +258,7 @@
     const btnNewFolder = items.cloneNode(true);
     btnNewFolder.id = "custom-new-folder-btn";
     btnNewFolder.querySelector(".title-container").textContent = "New folder";
+
     const iconContainer = btnNewFolder.querySelector(".mat-icon").parentElement;
     iconContainer.textContent = "";
     const icon = document.createElement("span");
@@ -262,21 +269,35 @@
     const folderSkeleton = btnNewFolder.cloneNode(true);
     folderSkeleton.removeAttribute("id");
 
-    const folderSpace = cvs.cloneNode(true);
-    folderSpace.querySelector("h1").textContent = "Folders";
+    // Construção robusta e manual do contêiner de pastas
+    const folderSpace = document.createElement("div");
+    folderSpace.style.display = "flex";
+    folderSpace.style.flexDirection = "column";
+    folderSpace.style.marginTop = "10px";
+
+    const folderTitleContainer = document.createElement("div");
+    folderTitleContainer.style.padding = "10px 16px 8px";
+
+    const folderTitle = document.createElement("h1");
+    folderTitle.textContent = "Folders";
+    folderTitle.style.fontSize = "14px";
+    folderTitle.style.fontWeight = "500";
+    folderTitle.style.margin = "0";
+    folderTitle.style.color = "var(--gem-sys-color--on-surface-variant, #c4c7c5)";
+
+    folderTitleContainer.appendChild(folderTitle);
+    folderSpace.appendChild(folderTitleContainer);
+
     const folderList = document.createElement("div");
     folderList.id = "custom-folder-list";
     folderSpace.appendChild(folderList);
 
-    chrome.storage.local.get(["gemini_folders_state"], (result) => {
-      const state = result.gemini_folders_state;
-      if (state?.folders) {
-        state.folders.forEach(f => {
-          const restored = createFolderUI(f.id, f.name, folderSkeleton, folderList);
-          folderList.appendChild(restored);
-        });
-      }
-    });
+    if (appState.folders) {
+      appState.folders.forEach(f => {
+        const restored = createFolderUI(f.id, f.name, folderSkeleton, folderList);
+        folderList.appendChild(restored);
+      });
+    }
 
     btnNewFolder.addEventListener("click", (e) => {
       e.preventDefault();
@@ -291,7 +312,32 @@
     el.insertAdjacentElement("afterend", folderSpace);
   };
 
-  const obs = new MutationObserver(putborder);
-  obs.observe(document.body, { childList: true, subtree: true });
+  chrome.storage.local.get(["gemini_folders_state"], (result) => {
+    if (result.gemini_folders_state) {
+      appState = result.gemini_folders_state;
+      if (!appState.chatMappings) appState.chatMappings = {};
+      if (!appState.folders) appState.folders = [];
+    }
+
+    setInterval(() => {
+      const targetAnchor = document.querySelector(".gems-list-container");
+      if (targetAnchor && !document.getElementById("custom-folder-list")) {
+        putborder();
+      }
+      makeDraggable();
+    }, 800);
+
+    const obs = new MutationObserver(() => {
+      const targetAnchor = document.querySelector(".gems-list-container");
+      if (targetAnchor && !document.getElementById("custom-folder-list")) {
+        putborder();
+      }
+      makeDraggable();
+    });
+
+    obs.observe(document.body, { childList: true, subtree: true });
+
+    putborder();
+  });
 
 })();
