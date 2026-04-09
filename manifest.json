@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gemini Folders",
-  "version": "1.0",
+  "version": "1.2.2",
   "description": "Create folders in Gemini to organize your conversations.",
   "permissions": [
     "storage"
