@@ -33,6 +33,8 @@ To remove a chat from a folder, simply drag it back to the same folder
 
 ### With / Without the extension
 
+<img width="578" height="408" alt="image" src="https://github.com/user-attachments/assets/79526d7f-ad97-4d63-8e63-09c85b7028a5" />
+
 
 ## 📄 License
 This project is under the [MIT License](LICENSE).
