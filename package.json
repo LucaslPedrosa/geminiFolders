@@ -1,0 +1,13 @@
+{
+  "name": "gemini-folders",
+  "version": "1.2.2",
+  "private": true,
+  "description": "Build tooling for Gemini Folders Chrome extension",
+  "scripts": {
+    "build": "esbuild src/content/main.js --bundle --format=iife --platform=browser --target=chrome114 --outfile=index.js",
+    "watch": "esbuild src/content/main.js --bundle --format=iife --platform=browser --target=chrome114 --outfile=index.js --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.3"
+  }
+}

@@ -38,3 +38,18 @@ To remove a chat from a folder, simply drag it back to the same folder
 
 ## 📄 License
 This project is under the [MIT License](LICENSE).
+
+---
+
+## Development
+
+Source code is now modularized under `src/content/**` and bundled into `index.js` for the extension.
+
+1. Install dependencies:
+	- `npm install`
+2. Build once:
+	- `npm run build`
+3. Watch and rebuild on changes:
+	- `npm run watch`
+
+After building, reload the unpacked extension in `chrome://extensions`.
