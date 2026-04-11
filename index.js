@@ -10,6 +10,7 @@
   };
   var IDS = {
     folderList: "custom-folder-list",
+    folderSpace: "custom-folder-space",
     newFolderButton: "custom-new-folder-btn"
   };
 
@@ -30,97 +31,6 @@
         };
       }
     }
-  };
-
-  // src/content/state/store.js
-  var appState = { folders: [], chatMappings: {} };
-  var getAppState = () => appState;
-  var saveState = () => {
-    const state = { folders: [], chatMappings: appState.chatMappings };
-    document.querySelectorAll(SELECTORS.folderItem).forEach((folderNode) => {
-      const titleNode = folderNode.querySelector(SELECTORS.titleContainer);
-      state.folders.push({
-        id: folderNode.id,
-        name: titleNode ? titleNode.textContent : ""
-      });
-    });
-    appState = state;
-    chrome.storage.local.set({ gemini_folders_state: state });
-  };
-  var loadState = (onLoaded) => {
-    chrome.storage.local.get(["gemini_folders_state"], (result) => {
-      if (result.gemini_folders_state) {
-        appState = result.gemini_folders_state;
-        if (!appState.chatMappings) appState.chatMappings = {};
-        if (!appState.folders) appState.folders = [];
-        migrateLegacyChatMappings(appState);
-      }
-      onLoaded();
-    });
-  };
-
-  // src/content/chat/draggable.js
-  var makeDraggable = () => {
-    const appState2 = getAppState();
-    const chats = document.querySelectorAll(".conversation-items-container");
-    chats.forEach((chat) => {
-      if (chat.config) return;
-      if (!chat.id) {
-        const link = chat.querySelector("a");
-        if (link && link.href) {
-          const match = link.href.match(/\/app\/([a-z0-9]+)/);
-          chat.id = match ? "chat-" + match[1] : "chat-" + btoa(link.href).substring(0, 15);
-        } else {
-          return;
-        }
-      }
-      if (appState2.chatMappings[chat.id] && appState2.chatMappings[chat.id].folder) {
-        chat.dataset.folder = appState2.chatMappings[chat.id].folder;
-      }
-      if (runtime.openFolder) {
-        chat.style.display = chat.dataset.folder === runtime.openFolder.id ? "flex" : "none";
-      } else {
-        chat.style.display = chat.dataset.folder ? "none" : "flex";
-      }
-      chat.draggable = true;
-      chat.config = true;
-      chat.addEventListener("dragstart", (e) => {
-        chat.style.opacity = "0.4";
-        const linkElement = chat.querySelector("a");
-        const titleElement = chat.querySelector(".title-container") || chat;
-        const chatData = {
-          id: chat.id,
-          url: linkElement ? linkElement.href : "",
-          title: titleElement.textContent.trim()
-        };
-        e.dataTransfer.setData("text/plain", JSON.stringify(chatData));
-        runtime.currentDraggedChat = chat;
-        if (chat.dataset.folder) {
-          const parentFolder = document.getElementById(chat.dataset.folder);
-          if (parentFolder) {
-            const currentIcon = parentFolder.querySelector(".mat-icon");
-            if (currentIcon) {
-              currentIcon.textContent = "close";
-              currentIcon.style.color = "#ff5c5c";
-            }
-          }
-        }
-      });
-      chat.addEventListener("dragend", () => {
-        chat.style.opacity = "1";
-        if (runtime.currentDraggedChat && runtime.currentDraggedChat.dataset.folder) {
-          const parentFolder = document.getElementById(runtime.currentDraggedChat.dataset.folder);
-          if (parentFolder) {
-            const currentIcon = parentFolder.querySelector(".mat-icon");
-            if (currentIcon) {
-              currentIcon.textContent = parentFolder.isOpen ? "folder_open" : "folder";
-              currentIcon.style.color = "";
-            }
-          }
-        }
-        runtime.currentDraggedChat = null;
-      });
-    });
   };
 
   // src/content/ui/virtual-chats.js
@@ -175,6 +85,50 @@
   };
 
   // src/content/ui/folder-ui.js
+  var updateFolderChatCount = (folderNode) => {
+    const countNode = folderNode.querySelector(".folder-chat-count");
+    if (!countNode) return;
+    const appState2 = getAppState();
+    const folderId = folderNode.id;
+    const count = Object.values(appState2.chatMappings || {}).filter((chatInfo) => chatInfo && chatInfo.folder === folderId).length;
+    countNode.textContent = String(count);
+    countNode.style.display = count > 0 ? "flex" : "none";
+  };
+  var refreshAllFolderCounts = () => {
+    document.querySelectorAll(".folder-item").forEach((folderNode) => {
+      updateFolderChatCount(folderNode);
+    });
+  };
+  var applyChatDropToFolder = (chatData, folderNode) => {
+    if (!chatData || !folderNode) return;
+    const appState2 = getAppState();
+    const chatElement = document.getElementById(chatData.id);
+    if (chatElement) {
+      if (chatElement.dataset.folder === folderNode.id) {
+        delete chatElement.dataset.folder;
+        delete appState2.chatMappings[chatData.id];
+        chatElement.style.display = "none";
+      } else {
+        chatElement.dataset.folder = folderNode.id;
+        appState2.chatMappings[chatData.id] = {
+          folder: folderNode.id,
+          title: chatData.title,
+          url: chatData.url
+        };
+        chatElement.style.display = folderNode.isOpen ? "flex" : "none";
+      }
+    } else {
+      appState2.chatMappings[chatData.id] = {
+        folder: folderNode.id,
+        title: chatData.title,
+        url: chatData.url
+      };
+    }
+    saveState();
+    if (folderNode.isOpen) {
+      renderVirtualChats(folderNode);
+    }
+  };
   var createFolderUI = (id, name, folderSkeleton) => {
     const newFolder = folderSkeleton.cloneNode(true);
     newFolder.id = id;
@@ -208,6 +162,27 @@
     deleteBtn.style.width = "28px";
     deleteBtn.style.height = "28px";
     deleteBtn.style.borderRadius = "50%";
+    const countNode = document.createElement("span");
+    countNode.className = "folder-chat-count";
+    countNode.textContent = "0";
+    countNode.style.position = "absolute";
+    countNode.style.right = "40px";
+    countNode.style.top = "50%";
+    countNode.style.transform = "translateY(-50%)";
+    countNode.style.minWidth = "20px";
+    countNode.style.height = "20px";
+    countNode.style.padding = "0 6px";
+    countNode.style.display = "none";
+    countNode.style.alignItems = "center";
+    countNode.style.justifyContent = "center";
+    countNode.style.borderRadius = "999px";
+    countNode.style.backgroundColor = "rgba(255, 255, 255, 0.08)";
+    countNode.style.color = "#e3e3e3";
+    countNode.style.fontSize = "12px";
+    countNode.style.fontWeight = "600";
+    countNode.style.lineHeight = "1";
+    countNode.style.pointerEvents = "none";
+    newFolder.appendChild(countNode);
     newFolder.appendChild(deleteBtn);
     newFolder.addEventListener("mouseenter", () => {
       deleteBtn.style.opacity = "1";
@@ -284,33 +259,7 @@
       } catch {
         return;
       }
-      const appState2 = getAppState();
-      const chatElement = document.getElementById(chatData.id);
-      if (chatElement) {
-        if (chatElement.dataset.folder === newFolder.id) {
-          delete chatElement.dataset.folder;
-          delete appState2.chatMappings[chatData.id];
-          chatElement.style.display = "none";
-        } else {
-          chatElement.dataset.folder = newFolder.id;
-          appState2.chatMappings[chatData.id] = {
-            folder: newFolder.id,
-            title: chatData.title,
-            url: chatData.url
-          };
-          chatElement.style.display = newFolder.isOpen ? "flex" : "none";
-        }
-      } else {
-        appState2.chatMappings[chatData.id] = {
-          folder: newFolder.id,
-          title: chatData.title,
-          url: chatData.url
-        };
-      }
-      saveState();
-      if (newFolder.isOpen) {
-        renderVirtualChats(newFolder);
-      }
+      applyChatDropToFolder(chatData, newFolder);
     });
     newFolder.addEventListener("click", (e) => {
       e.preventDefault();
@@ -329,6 +278,7 @@
           }
           runtime.openFolder = newFolder.isOpen ? newFolder : null;
           renderVirtualChats(newFolder);
+          updateFolderChatCount(newFolder);
           document.querySelectorAll(".conversation-items-container").forEach((chat) => {
             if (newFolder.isOpen) {
               if (chat.dataset.folder !== newFolder.id) {
@@ -341,62 +291,420 @@
         }, 200);
       }
     });
+    updateFolderChatCount(newFolder);
     return newFolder;
+  };
+
+  // src/content/state/store.js
+  var appState = { folders: [], chatMappings: {} };
+  var getAppState = () => appState;
+  var saveState = () => {
+    const state = { folders: [], chatMappings: appState.chatMappings };
+    document.querySelectorAll(SELECTORS.folderItem).forEach((folderNode) => {
+      const titleNode = folderNode.querySelector(SELECTORS.titleContainer);
+      state.folders.push({
+        id: folderNode.id,
+        name: titleNode ? titleNode.textContent : ""
+      });
+    });
+    appState = state;
+    chrome.storage.local.set({ gemini_folders_state: state });
+    refreshAllFolderCounts();
+  };
+  var loadState = (onLoaded) => {
+    chrome.storage.local.get(["gemini_folders_state"], (result) => {
+      if (result.gemini_folders_state) {
+        appState = result.gemini_folders_state;
+        if (!appState.chatMappings) appState.chatMappings = {};
+        if (!appState.folders) appState.folders = [];
+        migrateLegacyChatMappings(appState);
+      }
+      onLoaded();
+    });
+  };
+
+  // src/content/chat/draggable.js
+  var activeDragPreview = null;
+  var activeDragState = null;
+  var hoveredFolder = null;
+  var suppressNextClick = false;
+  var DRAG_OFFSET_X = 18;
+  var DRAG_OFFSET_Y = 18;
+  var DRAG_START_THRESHOLD_PX = 5;
+  var dragListenersAttached = false;
+  var removeActiveDragPreview = () => {
+    if (activeDragPreview && activeDragPreview.parentNode) {
+      activeDragPreview.parentNode.removeChild(activeDragPreview);
+    }
+    activeDragPreview = null;
+  };
+  var clearHoveredFolderHighlight = () => {
+    if (hoveredFolder) {
+      hoveredFolder.style.backgroundColor = "transparent";
+      hoveredFolder = null;
+    }
+  };
+  var setHoveredFolder = (folderNode) => {
+    if (hoveredFolder === folderNode) return;
+    clearHoveredFolderHighlight();
+    if (folderNode) {
+      hoveredFolder = folderNode;
+      hoveredFolder.style.backgroundColor = "rgba(255, 255, 255, 0.2)";
+    }
+  };
+  var resetDraggedChatStyles = (chat) => {
+    if (!chat) return;
+    chat.style.opacity = "1";
+    chat.style.transform = "";
+    chat.style.boxShadow = "";
+    chat.style.backgroundColor = "";
+    chat.style.cursor = "grab";
+    chat.style.userSelect = "";
+  };
+  var setDraggedChatStyles = (chat) => {
+    if (!chat) return;
+    chat.style.opacity = "0.72";
+    chat.style.transform = "scale(1.02)";
+    chat.style.boxShadow = "0 12px 28px rgba(0, 0, 0, 0.28)";
+    chat.style.backgroundColor = "rgba(255, 255, 255, 0.06)";
+    chat.style.cursor = "grab";
+    chat.style.userSelect = "none";
+  };
+  var makePreviewFromChat = (chat) => {
+    const preview = chat.cloneNode(true);
+    preview.style.position = "fixed";
+    preview.style.top = "0px";
+    preview.style.left = "0px";
+    preview.style.width = `${Math.max(chat.getBoundingClientRect().width, 260)}px`;
+    preview.style.maxWidth = "360px";
+    preview.style.padding = "8px 12px";
+    preview.style.borderRadius = "14px";
+    preview.style.background = "rgba(32, 33, 36, 0.96)";
+    preview.style.backdropFilter = "blur(10px)";
+    preview.style.boxShadow = "0 18px 40px rgba(0, 0, 0, 0.32)";
+    preview.style.border = "1px solid rgba(255, 255, 255, 0.08)";
+    preview.style.pointerEvents = "none";
+    preview.style.cursor = "grab";
+    preview.style.zIndex = "2147483647";
+    preview.style.opacity = "1";
+    const anchor = preview.querySelector("a");
+    if (anchor) {
+      anchor.style.color = "inherit";
+      anchor.style.textDecoration = "none";
+      anchor.style.cursor = "inherit";
+      anchor.style.pointerEvents = "none";
+      anchor.style.font = "inherit";
+      anchor.style.lineHeight = "inherit";
+    }
+    const titleNode = preview.querySelector(".title-container");
+    if (titleNode) {
+      titleNode.style.color = "#e3e3e3";
+    }
+    const iconNode = preview.querySelector(".mat-icon");
+    if (iconNode) {
+      iconNode.style.color = "#c4c7c5";
+    }
+    return preview;
+  };
+  var positionDragPreview = (preview, clientX, clientY) => {
+    if (!preview) return;
+    preview.style.transform = `translate(${Math.round(clientX + DRAG_OFFSET_X)}px, ${Math.round(clientY + DRAG_OFFSET_Y)}px)`;
+  };
+  var getFolderFromPoint = (clientX, clientY) => {
+    const element = document.elementFromPoint(clientX, clientY);
+    return element ? element.closest(".folder-item") : null;
+  };
+  var applyDropAtPoint = (clientX, clientY) => {
+    if (!activeDragState) return;
+    const initialFolderId = activeDragState.initialFolderId;
+    const targetFolder = getFolderFromPoint(clientX, clientY);
+    if (targetFolder) {
+      applyChatDropToFolder(activeDragState.chatData, targetFolder);
+    }
+    if (activeDragState.chat) {
+      resetDraggedChatStyles(activeDragState.chat);
+    }
+    if (initialFolderId) {
+      const parentFolder = document.getElementById(initialFolderId);
+      if (parentFolder) {
+        const currentIcon = parentFolder.querySelector(".mat-icon");
+        if (currentIcon) {
+          currentIcon.textContent = parentFolder.isOpen ? "folder_open" : "folder";
+          currentIcon.style.color = "";
+        }
+      }
+    }
+    runtime.currentDraggedChat = null;
+    activeDragState = null;
+    removeActiveDragPreview();
+    clearHoveredFolderHighlight();
+    document.body.style.userSelect = "";
+    suppressNextClick = true;
+    setTimeout(() => {
+      suppressNextClick = false;
+    }, 0);
+  };
+  var cancelActiveDrag = () => {
+    if (!activeDragState) return;
+    if (activeDragState.initialFolderId) {
+      const parentFolder = document.getElementById(activeDragState.initialFolderId);
+      if (parentFolder) {
+        const currentIcon = parentFolder.querySelector(".mat-icon");
+        if (currentIcon) {
+          currentIcon.textContent = parentFolder.isOpen ? "folder_open" : "folder";
+          currentIcon.style.color = "";
+        }
+      }
+    }
+    if (activeDragState.chat) {
+      resetDraggedChatStyles(activeDragState.chat);
+    }
+    runtime.currentDraggedChat = null;
+    activeDragState = null;
+    removeActiveDragPreview();
+    clearHoveredFolderHighlight();
+    document.body.style.userSelect = "";
+  };
+  var disableLinkDragGhost = (chat) => {
+    chat.querySelectorAll("a").forEach((anchor) => {
+      anchor.draggable = false;
+      anchor.addEventListener(
+        "dragstart",
+        (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        },
+        true
+      );
+    });
+  };
+  var handlePointerMove = (event) => {
+    if (!activeDragState || event.pointerId !== activeDragState.pointerId) return;
+    const deltaX = event.clientX - activeDragState.startX;
+    const deltaY = event.clientY - activeDragState.startY;
+    if (!activeDragState.isDragging) {
+      if (deltaX * deltaX + deltaY * deltaY < DRAG_START_THRESHOLD_PX * DRAG_START_THRESHOLD_PX) {
+        return;
+      }
+      activeDragState.isDragging = true;
+      activeDragState.chat.setPointerCapture?.(event.pointerId);
+      setDraggedChatStyles(activeDragState.chat);
+      const dragPreview = makePreviewFromChat(activeDragState.chat);
+      document.body.appendChild(dragPreview);
+      activeDragPreview = dragPreview;
+      positionDragPreview(activeDragPreview, event.clientX, event.clientY);
+      document.body.style.userSelect = "none";
+    }
+    if (!activeDragPreview) return;
+    event.preventDefault();
+    positionDragPreview(activeDragPreview, event.clientX, event.clientY);
+    setHoveredFolder(getFolderFromPoint(event.clientX, event.clientY));
+  };
+  var handlePointerUp = (event) => {
+    if (!activeDragState || event.pointerId !== activeDragState.pointerId) return;
+    if (activeDragState.isDragging) {
+      applyDropAtPoint(event.clientX, event.clientY);
+    } else {
+      cancelActiveDrag();
+    }
+  };
+  var handlePointerCancel = (event) => {
+    if (!activeDragState || event.pointerId !== activeDragState.pointerId) return;
+    cancelActiveDrag();
+  };
+  var makeDraggable = () => {
+    const appState2 = getAppState();
+    const chats = document.querySelectorAll(".conversation-items-container");
+    if (!dragListenersAttached) {
+      document.addEventListener("pointermove", handlePointerMove, true);
+      document.addEventListener("pointerup", handlePointerUp, true);
+      document.addEventListener("pointercancel", handlePointerCancel, true);
+      dragListenersAttached = true;
+    }
+    chats.forEach((chat) => {
+      if (chat.config) return;
+      if (!chat.id) {
+        const link = chat.querySelector("a");
+        if (link && link.href) {
+          const match = link.href.match(/\/app\/([a-z0-9]+)/);
+          chat.id = match ? "chat-" + match[1] : "chat-" + btoa(link.href).substring(0, 15);
+        } else {
+          return;
+        }
+      }
+      if (appState2.chatMappings[chat.id] && appState2.chatMappings[chat.id].folder) {
+        chat.dataset.folder = appState2.chatMappings[chat.id].folder;
+      }
+      if (runtime.openFolder) {
+        chat.style.display = chat.dataset.folder === runtime.openFolder.id ? "flex" : "none";
+      } else {
+        chat.style.display = chat.dataset.folder ? "none" : "flex";
+      }
+      chat.config = true;
+      chat.style.cursor = "grab";
+      chat.style.transition = "transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease, background-color 120ms ease";
+      disableLinkDragGhost(chat);
+      chat.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        if (event.target && event.target.closest && event.target.closest(".mat-icon")) return;
+        const linkElement = chat.querySelector("a");
+        const titleElement = chat.querySelector(".title-container") || chat;
+        activeDragState = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          chat,
+          chatData: {
+            id: chat.id,
+            url: linkElement ? linkElement.href : "",
+            title: titleElement.textContent.trim()
+          },
+          initialFolderId: chat.dataset.folder || null,
+          isDragging: false
+        };
+        runtime.currentDraggedChat = chat;
+        document.body.style.userSelect = "none";
+        if (chat.dataset.folder) {
+          const parentFolder = document.getElementById(chat.dataset.folder);
+          if (parentFolder) {
+            const currentIcon = parentFolder.querySelector(".mat-icon");
+            if (currentIcon) {
+              currentIcon.textContent = "close";
+              currentIcon.style.color = "#ff5c5c";
+            }
+          }
+        }
+      });
+      chat.addEventListener("click", (event) => {
+        if (!suppressNextClick) return;
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNextClick = false;
+      });
+    });
   };
 
   // src/content/dom/sidebar-injection.js
   var putborder = () => {
     const el = document.querySelector(SELECTORS.gemsListContainer);
     const items = document.querySelector(SELECTORS.sideNavEntry);
-    const cvs = document.querySelector(SELECTORS.sectionTitle);
-    if (!el || !items || !cvs) return;
-    const existingList = document.getElementById(IDS.folderList);
-    if (existingList) existingList.remove();
-    const existingBtn = document.getElementById(IDS.newFolderButton);
-    if (existingBtn) existingBtn.remove();
-    const btnNewFolder = items.cloneNode(true);
-    btnNewFolder.id = IDS.newFolderButton;
-    btnNewFolder.querySelector(".title-container").textContent = "New folder";
-    const iconContainer = btnNewFolder.querySelector(".mat-icon").parentElement;
-    iconContainer.textContent = "";
-    const icon = document.createElement("span");
-    icon.className = "mat-icon notranslate google-symbols mat-ligature-font material-icons-outlined";
-    icon.textContent = "create_new_folder";
-    iconContainer.appendChild(icon);
-    const folderSkeleton = btnNewFolder.cloneNode(true);
-    folderSkeleton.removeAttribute("id");
-    const folderSpace = cvs.cloneNode(true);
-    folderSpace.querySelector("h1").textContent = "Folders";
-    const folderList = document.createElement("div");
-    folderList.id = IDS.folderList;
-    folderSpace.appendChild(folderList);
-    const appState2 = getAppState();
-    if (appState2.folders) {
-      appState2.folders.forEach((folder) => {
-        const restored = createFolderUI(folder.id, folder.name, folderSkeleton);
-        folderList.appendChild(restored);
+    if (!el || !items) return;
+    try {
+      const existingSpace = document.getElementById(IDS.folderSpace);
+      const btnNewFolder = items.cloneNode(true);
+      btnNewFolder.id = IDS.newFolderButton;
+      const titleNode = btnNewFolder.querySelector(".title-container");
+      if (!titleNode) return;
+      titleNode.textContent = "New folder";
+      const iconHost = btnNewFolder.querySelector(".mat-icon");
+      if (!iconHost || !iconHost.parentElement) return;
+      const iconContainer = iconHost.parentElement;
+      iconContainer.textContent = "";
+      const icon = document.createElement("span");
+      icon.className = "mat-icon notranslate google-symbols mat-ligature-font material-icons-outlined";
+      icon.textContent = "create_new_folder";
+      iconContainer.appendChild(icon);
+      const folderSkeleton = btnNewFolder.cloneNode(true);
+      folderSkeleton.removeAttribute("id");
+      const folderSpace = document.createElement("section");
+      folderSpace.id = IDS.folderSpace;
+      folderSpace.className = "folder-space";
+      folderSpace.style.display = "flex";
+      folderSpace.style.flexDirection = "column";
+      folderSpace.style.gap = "8px";
+      folderSpace.style.padding = "8px 0";
+      folderSpace.style.minHeight = "56px";
+      folderSpace.style.boxSizing = "border-box";
+      const folderTitleRow = document.createElement("div");
+      folderTitleRow.style.display = "flex";
+      folderTitleRow.style.alignItems = "center";
+      folderTitleRow.style.padding = "0 16px";
+      folderTitleRow.style.minHeight = "32px";
+      const folderTitle = document.createElement("h1");
+      folderTitle.textContent = "Folders";
+      folderTitle.style.margin = "0";
+      folderTitle.style.fontSize = "14px";
+      folderTitle.style.fontWeight = "600";
+      folderTitle.style.letterSpacing = "0.2px";
+      folderTitle.style.fontFamily = '"Google Sans", "Google Sans Text", "Roboto", Arial, sans-serif';
+      folderTitle.style.lineHeight = "20px";
+      folderTitle.style.color = "inherit";
+      folderTitleRow.appendChild(folderTitle);
+      folderSpace.appendChild(folderTitleRow);
+      const folderList = document.createElement("div");
+      folderList.id = IDS.folderList;
+      folderList.style.display = "flex";
+      folderList.style.flexDirection = "column";
+      folderList.style.gap = "4px";
+      folderList.style.minHeight = "1px";
+      folderList.style.padding = "0 8px 8px 8px";
+      folderSpace.appendChild(folderList);
+      const appState2 = getAppState();
+      if (appState2.folders && appState2.folders.length > 0) {
+        appState2.folders.forEach((folder) => {
+          const restored = createFolderUI(folder.id, folder.name, folderSkeleton);
+          folderList.appendChild(restored);
+        });
+      }
+      if (appState2.folders && appState2.folders.length === 0) {
+        const emptyState = document.createElement("div");
+        emptyState.textContent = "No folders yet";
+        emptyState.style.padding = "8px 16px 4px 16px";
+        emptyState.style.fontSize = "13px";
+        emptyState.style.opacity = "0.7";
+        folderList.appendChild(emptyState);
+      }
+      btnNewFolder.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = "folder-" + Math.random().toString(36).substr(2, 9);
+        const newFolder = createFolderUI(id, "New Folder", folderSkeleton);
+        folderList.appendChild(newFolder);
+        saveState();
       });
+      const existingList = document.getElementById(IDS.folderList);
+      const existingBtn = document.getElementById(IDS.newFolderButton);
+      if (existingBtn && existingBtn.parentNode) {
+        existingBtn.parentNode.removeChild(existingBtn);
+      }
+      if (existingSpace && existingSpace.parentNode) {
+        existingSpace.parentNode.removeChild(existingSpace);
+      } else if (existingList && existingList.parentNode) {
+        existingList.parentNode.removeChild(existingList);
+      }
+      el.insertAdjacentElement("beforebegin", btnNewFolder);
+      el.insertAdjacentElement("afterend", folderSpace);
+    } catch {
+      return;
     }
-    btnNewFolder.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const id = "folder-" + Math.random().toString(36).substr(2, 9);
-      const newFolder = createFolderUI(id, "New Folder", folderSkeleton);
-      folderList.appendChild(newFolder);
-      saveState();
-    });
-    el.insertAdjacentElement("beforebegin", btnNewFolder);
-    el.insertAdjacentElement("afterend", folderSpace);
   };
 
   // src/content/core/controller.js
+  var controllerQueued = false;
+  var controllerRetryTimer = null;
+  var scheduleCoreController = () => {
+    if (controllerQueued) return;
+    controllerQueued = true;
+    requestAnimationFrame(() => {
+      controllerQueued = false;
+      coreController();
+    });
+  };
   var coreController = () => {
     const el = document.querySelector(SELECTORS.gemsListContainer);
     const items = document.querySelector(SELECTORS.sideNavEntry);
     const cvs = document.querySelector(SELECTORS.sectionTitle);
-    const isUIRendered = document.body.contains(document.getElementById(IDS.folderList));
+    const folderSpace = document.getElementById(IDS.folderSpace);
+    const folderList = document.getElementById(IDS.folderList);
+    const isUIRendered = Boolean(folderSpace && folderList && document.body.contains(folderSpace) && document.body.contains(folderList));
     if (el && items && cvs && !isUIRendered) {
       putborder();
+    } else if (!el || !items || !cvs) {
+      if (controllerRetryTimer) clearTimeout(controllerRetryTimer);
+      controllerRetryTimer = setTimeout(() => {
+        controllerRetryTimer = null;
+        scheduleCoreController();
+      }, 250);
     }
     makeDraggable();
   };
@@ -405,8 +713,8 @@
   (function() {
     "use strict";
     loadState(() => {
-      setInterval(coreController, 800);
-      const observer = new MutationObserver(coreController);
+      setInterval(scheduleCoreController, 800);
+      const observer = new MutationObserver(scheduleCoreController);
       observer.observe(document.body, { childList: true, subtree: true });
       coreController();
     });

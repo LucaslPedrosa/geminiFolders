@@ -9,5 +9,6 @@ export const SELECTORS = {
 
 export const IDS = {
   folderList: "custom-folder-list",
+  folderSpace: "custom-folder-space",
   newFolderButton: "custom-new-folder-btn"
 };

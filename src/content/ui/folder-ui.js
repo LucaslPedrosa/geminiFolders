@@ -2,6 +2,58 @@ import { runtime } from "../state/runtime.js";
 import { getAppState, saveState } from "../state/store.js";
 import { renderVirtualChats } from "./virtual-chats.js";
 
+const updateFolderChatCount = (folderNode) => {
+  const countNode = folderNode.querySelector(".folder-chat-count");
+  if (!countNode) return;
+
+  const appState = getAppState();
+  const folderId = folderNode.id;
+  const count = Object.values(appState.chatMappings || {}).filter((chatInfo) => chatInfo && chatInfo.folder === folderId).length;
+  countNode.textContent = String(count);
+  countNode.style.display = count > 0 ? "flex" : "none";
+};
+
+export const refreshAllFolderCounts = () => {
+  document.querySelectorAll(".folder-item").forEach((folderNode) => {
+    updateFolderChatCount(folderNode);
+  });
+};
+
+export const applyChatDropToFolder = (chatData, folderNode) => {
+  if (!chatData || !folderNode) return;
+
+  const appState = getAppState();
+  const chatElement = document.getElementById(chatData.id);
+
+  if (chatElement) {
+    if (chatElement.dataset.folder === folderNode.id) {
+      delete chatElement.dataset.folder;
+      delete appState.chatMappings[chatData.id];
+      chatElement.style.display = "none";
+    } else {
+      chatElement.dataset.folder = folderNode.id;
+      appState.chatMappings[chatData.id] = {
+        folder: folderNode.id,
+        title: chatData.title,
+        url: chatData.url
+      };
+      chatElement.style.display = folderNode.isOpen ? "flex" : "none";
+    }
+  } else {
+    appState.chatMappings[chatData.id] = {
+      folder: folderNode.id,
+      title: chatData.title,
+      url: chatData.url
+    };
+  }
+
+  saveState();
+
+  if (folderNode.isOpen) {
+    renderVirtualChats(folderNode);
+  }
+};
+
 export const createFolderUI = (id, name, folderSkeleton) => {
   const newFolder = folderSkeleton.cloneNode(true);
   newFolder.id = id;
@@ -39,6 +91,28 @@ export const createFolderUI = (id, name, folderSkeleton) => {
   deleteBtn.style.height = "28px";
   deleteBtn.style.borderRadius = "50%";
 
+  const countNode = document.createElement("span");
+  countNode.className = "folder-chat-count";
+  countNode.textContent = "0";
+  countNode.style.position = "absolute";
+  countNode.style.right = "40px";
+  countNode.style.top = "50%";
+  countNode.style.transform = "translateY(-50%)";
+  countNode.style.minWidth = "20px";
+  countNode.style.height = "20px";
+  countNode.style.padding = "0 6px";
+  countNode.style.display = "none";
+  countNode.style.alignItems = "center";
+  countNode.style.justifyContent = "center";
+  countNode.style.borderRadius = "999px";
+  countNode.style.backgroundColor = "rgba(255, 255, 255, 0.08)";
+  countNode.style.color = "#e3e3e3";
+  countNode.style.fontSize = "12px";
+  countNode.style.fontWeight = "600";
+  countNode.style.lineHeight = "1";
+  countNode.style.pointerEvents = "none";
+
+  newFolder.appendChild(countNode);
   newFolder.appendChild(deleteBtn);
 
   newFolder.addEventListener("mouseenter", () => {
@@ -132,37 +206,7 @@ export const createFolderUI = (id, name, folderSkeleton) => {
     } catch {
       return;
     }
-
-    const appState = getAppState();
-    const chatElement = document.getElementById(chatData.id);
-
-    if (chatElement) {
-      if (chatElement.dataset.folder === newFolder.id) {
-        delete chatElement.dataset.folder;
-        delete appState.chatMappings[chatData.id];
-        chatElement.style.display = "none";
-      } else {
-        chatElement.dataset.folder = newFolder.id;
-        appState.chatMappings[chatData.id] = {
-          folder: newFolder.id,
-          title: chatData.title,
-          url: chatData.url
-        };
-        chatElement.style.display = newFolder.isOpen ? "flex" : "none";
-      }
-    } else {
-      appState.chatMappings[chatData.id] = {
-        folder: newFolder.id,
-        title: chatData.title,
-        url: chatData.url
-      };
-    }
-
-    saveState();
-
-    if (newFolder.isOpen) {
-      renderVirtualChats(newFolder);
-    }
+    applyChatDropToFolder(chatData, newFolder);
   });
 
   newFolder.addEventListener("click", (e) => {
@@ -186,6 +230,7 @@ export const createFolderUI = (id, name, folderSkeleton) => {
         runtime.openFolder = newFolder.isOpen ? newFolder : null;
 
         renderVirtualChats(newFolder);
+        updateFolderChatCount(newFolder);
 
         document.querySelectorAll(".conversation-items-container").forEach((chat) => {
           if (newFolder.isOpen) {
@@ -200,5 +245,6 @@ export const createFolderUI = (id, name, folderSkeleton) => {
     }
   });
 
+  updateFolderChatCount(newFolder);
   return newFolder;
 };

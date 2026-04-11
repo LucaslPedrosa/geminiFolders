@@ -1,5 +1,6 @@
 import { SELECTORS } from "../config/selectors.js";
 import { migrateLegacyChatMappings } from "./migrations.js";
+import { refreshAllFolderCounts } from "../ui/folder-ui.js";
 
 let appState = { folders: [], chatMappings: {} };
 
@@ -22,6 +23,7 @@ export const saveState = () => {
 
   appState = state;
   chrome.storage.local.set({ gemini_folders_state: state });
+  refreshAllFolderCounts();
 };
 
 export const loadState = (onLoaded) => {
