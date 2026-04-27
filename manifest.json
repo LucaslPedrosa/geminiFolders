@@ -1,11 +1,25 @@
 {
   "manifest_version": 3,
   "name": "Gemini Folders",
-  "version": "1.3",
+  "version": "1.3.0",
   "description": "Create folders in Gemini to organize your conversations.",
   "permissions": [
     "storage"
   ],
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    }
+  },
   "content_scripts": [
     {
       "matches": [

@@ -1,6 +1,7 @@
 import { runtime } from "../state/runtime.js";
 import { getAppState } from "../state/store.js";
 import { applyChatDropToFolder } from "../ui/folder-ui.js";
+import { SELECTORS } from "../config/selectors.js";
 
 let activeDragPreview = null;
 let activeDragState = null;
@@ -232,7 +233,7 @@ const handlePointerCancel = (event) => {
 
 export const makeDraggable = () => {
   const appState = getAppState();
-  const chats = document.querySelectorAll(".conversation-items-container");
+  const chats = document.querySelectorAll(SELECTORS.conversationItem);
 
   if (!dragListenersAttached) {
     document.addEventListener("pointermove", handlePointerMove, true);
@@ -242,7 +243,7 @@ export const makeDraggable = () => {
   }
 
   chats.forEach((chat) => {
-    if (chat.config) return;
+    if (chat.dataset.gfConfigured === "1") return;
 
     if (!chat.id) {
       const link = chat.querySelector("a");
@@ -264,7 +265,7 @@ export const makeDraggable = () => {
       chat.style.display = chat.dataset.folder ? "none" : "flex";
     }
 
-    chat.config = true;
+    chat.dataset.gfConfigured = "1";
     chat.style.cursor = "grab";
     chat.style.transition = "transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease, background-color 120ms ease";
     disableLinkDragGhost(chat);

@@ -22,6 +22,7 @@
 
   // src/content/state/migrations.js
   var migrateLegacyChatMappings = (state) => {
+    let didMigrate = false;
     for (const key in state.chatMappings) {
       if (typeof state.chatMappings[key] === "string") {
         state.chatMappings[key] = {
@@ -29,8 +30,10 @@
           title: "Chat Recuperado",
           url: ""
         };
+        didMigrate = true;
       }
     }
+    return didMigrate;
   };
 
   // src/content/ui/virtual-chats.js
@@ -103,6 +106,7 @@
     if (!chatData || !folderNode) return;
     const appState2 = getAppState();
     const chatElement = document.getElementById(chatData.id);
+    if (!appState2.chatMappings) appState2.chatMappings = {};
     if (chatElement) {
       if (chatElement.dataset.folder === folderNode.id) {
         delete chatElement.dataset.folder;
@@ -137,6 +141,7 @@
     newFolder.style.position = "relative";
     newFolder.style.transition = "background-color 0.2s";
     const titleNode = newFolder.querySelector(".title-container");
+    if (!titleNode) return newFolder;
     titleNode.textContent = name;
     titleNode.style.paddingRight = "30px";
     titleNode.style.overflow = "hidden";
@@ -201,7 +206,7 @@
     deleteBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      document.querySelectorAll(".conversation-items-container").forEach((chat) => {
+      document.querySelectorAll(SELECTORS.conversationItem).forEach((chat) => {
         if (chat.dataset.folder === newFolder.id) {
           delete chat.dataset.folder;
           chat.style.display = "flex";
@@ -221,25 +226,39 @@
     titleNode.addEventListener("dblclick", (e) => {
       e.stopPropagation();
       clearTimeout(clickTimer);
+      const previousTitle = titleNode.textContent;
+      let finished = false;
       titleNode.contentEditable = true;
       titleNode.focus();
       titleNode.style.outline = "1px solid white";
       titleNode.style.paddingRight = "5px";
       titleNode.style.cursor = "text";
-      const finishEdit = () => {
+      const finishEdit = ({ cancel } = { cancel: false }) => {
+        if (finished) return;
+        finished = true;
         titleNode.contentEditable = false;
         titleNode.style.outline = "none";
         titleNode.style.paddingRight = "30px";
         titleNode.style.cursor = "pointer";
+        if (cancel) {
+          titleNode.textContent = previousTitle;
+        }
+        const cleaned = (titleNode.textContent || "").trim();
+        titleNode.textContent = cleaned.length > 0 ? cleaned : "Untitled";
+        titleNode.removeEventListener("keydown", onKeyDown);
         saveState();
       };
-      titleNode.addEventListener("blur", finishEdit, { once: true });
-      titleNode.addEventListener("keydown", (event) => {
+      const onKeyDown = (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
           finishEdit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          finishEdit({ cancel: true });
         }
-      });
+      };
+      titleNode.addEventListener("blur", finishEdit, { once: true });
+      titleNode.addEventListener("keydown", onKeyDown);
     });
     newFolder.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -267,8 +286,9 @@
       if (titleNode.contentEditable === "true") return;
       if (e.detail === 1) {
         clickTimer = setTimeout(() => {
+          clickTimer = null;
           newFolder.isOpen = !newFolder.isOpen;
-          iconElement.textContent = newFolder.isOpen ? "folder_open" : "folder";
+          if (iconElement) iconElement.textContent = newFolder.isOpen ? "folder_open" : "folder";
           if (newFolder.isOpen && runtime.openFolder && runtime.openFolder !== newFolder) {
             runtime.openFolder.isOpen = false;
             const oldIcon = runtime.openFolder.querySelector(".mat-icon");
@@ -279,7 +299,7 @@
           runtime.openFolder = newFolder.isOpen ? newFolder : null;
           renderVirtualChats(newFolder);
           updateFolderChatCount(newFolder);
-          document.querySelectorAll(".conversation-items-container").forEach((chat) => {
+          document.querySelectorAll(SELECTORS.conversationItem).forEach((chat) => {
             if (newFolder.isOpen) {
               if (chat.dataset.folder !== newFolder.id) {
                 chat.style.display = "none";
@@ -299,25 +319,43 @@
   var appState = { folders: [], chatMappings: {} };
   var getAppState = () => appState;
   var saveState = () => {
+    if (!appState.chatMappings) appState.chatMappings = {};
     const state = { folders: [], chatMappings: appState.chatMappings };
+    const folderIds = /* @__PURE__ */ new Set();
     document.querySelectorAll(SELECTORS.folderItem).forEach((folderNode) => {
       const titleNode = folderNode.querySelector(SELECTORS.titleContainer);
+      const cleanedName = (titleNode ? titleNode.textContent : "").trim();
+      folderIds.add(folderNode.id);
       state.folders.push({
         id: folderNode.id,
-        name: titleNode ? titleNode.textContent : ""
+        name: cleanedName.length > 0 ? cleanedName : "Untitled"
       });
     });
+    for (const chatId of Object.keys(state.chatMappings)) {
+      const mapping = state.chatMappings[chatId];
+      if (!mapping || !mapping.folder || !folderIds.has(mapping.folder)) {
+        delete state.chatMappings[chatId];
+      }
+    }
     appState = state;
-    chrome.storage.local.set({ gemini_folders_state: state });
+    chrome.storage.local.set({ gemini_folders_state: state }, () => {
+      void chrome.runtime?.lastError;
+    });
     refreshAllFolderCounts();
   };
   var loadState = (onLoaded) => {
     chrome.storage.local.get(["gemini_folders_state"], (result) => {
+      void chrome.runtime?.lastError;
       if (result.gemini_folders_state) {
         appState = result.gemini_folders_state;
         if (!appState.chatMappings) appState.chatMappings = {};
         if (!appState.folders) appState.folders = [];
-        migrateLegacyChatMappings(appState);
+        const didMigrate = migrateLegacyChatMappings(appState);
+        if (didMigrate) {
+          chrome.storage.local.set({ gemini_folders_state: appState }, () => {
+            void chrome.runtime?.lastError;
+          });
+        }
       }
       onLoaded();
     });
@@ -514,7 +552,7 @@
   };
   var makeDraggable = () => {
     const appState2 = getAppState();
-    const chats = document.querySelectorAll(".conversation-items-container");
+    const chats = document.querySelectorAll(SELECTORS.conversationItem);
     if (!dragListenersAttached) {
       document.addEventListener("pointermove", handlePointerMove, true);
       document.addEventListener("pointerup", handlePointerUp, true);
@@ -522,7 +560,7 @@
       dragListenersAttached = true;
     }
     chats.forEach((chat) => {
-      if (chat.config) return;
+      if (chat.dataset.gfConfigured === "1") return;
       if (!chat.id) {
         const link = chat.querySelector("a");
         if (link && link.href) {
@@ -540,7 +578,7 @@
       } else {
         chat.style.display = chat.dataset.folder ? "none" : "flex";
       }
-      chat.config = true;
+      chat.dataset.gfConfigured = "1";
       chat.style.cursor = "grab";
       chat.style.transition = "transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease, background-color 120ms ease";
       disableLinkDragGhost(chat);
@@ -657,7 +695,7 @@
       btnNewFolder.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const id = "folder-" + Math.random().toString(36).substr(2, 9);
+        const id = typeof crypto !== "undefined" && crypto.randomUUID ? `folder-${crypto.randomUUID()}` : "folder-" + Math.random().toString(36).slice(2, 11);
         const newFolder = createFolderUI(id, "New Folder", folderSkeleton);
         folderList.appendChild(newFolder);
         saveState();
@@ -682,11 +720,25 @@
   // src/content/core/controller.js
   var controllerQueued = false;
   var controllerRetryTimer = null;
+  var controllerThrottleTimer = null;
+  var lastControllerRunAt = 0;
+  var MIN_CONTROLLER_INTERVAL_MS = 200;
   var scheduleCoreController = () => {
     if (controllerQueued) return;
+    const now = performance.now();
+    const elapsed = now - lastControllerRunAt;
+    if (elapsed < MIN_CONTROLLER_INTERVAL_MS) {
+      if (controllerThrottleTimer) return;
+      controllerThrottleTimer = setTimeout(() => {
+        controllerThrottleTimer = null;
+        scheduleCoreController();
+      }, MIN_CONTROLLER_INTERVAL_MS - elapsed);
+      return;
+    }
     controllerQueued = true;
     requestAnimationFrame(() => {
       controllerQueued = false;
+      lastControllerRunAt = performance.now();
       coreController();
     });
   };
@@ -694,6 +746,9 @@
     const el = document.querySelector(SELECTORS.gemsListContainer);
     const items = document.querySelector(SELECTORS.sideNavEntry);
     const cvs = document.querySelector(SELECTORS.sectionTitle);
+    if (runtime.openFolder && !document.body.contains(runtime.openFolder)) {
+      runtime.openFolder = null;
+    }
     const folderSpace = document.getElementById(IDS.folderSpace);
     const folderList = document.getElementById(IDS.folderList);
     const isUIRendered = Boolean(folderSpace && folderList && document.body.contains(folderSpace) && document.body.contains(folderList));
@@ -712,10 +767,16 @@
   // src/content/main.js
   (function() {
     "use strict";
+    const GLOBAL_KEY = "__GEMINI_FOLDERS__";
+    const existing = globalThis[GLOBAL_KEY];
+    if (existing && existing.initialized) return;
+    globalThis[GLOBAL_KEY] = { initialized: true };
     loadState(() => {
-      setInterval(scheduleCoreController, 800);
+      const intervalId = setInterval(scheduleCoreController, 1500);
       const observer = new MutationObserver(scheduleCoreController);
       observer.observe(document.body, { childList: true, subtree: true });
+      globalThis[GLOBAL_KEY].intervalId = intervalId;
+      globalThis[GLOBAL_KEY].observer = observer;
       coreController();
     });
   })();

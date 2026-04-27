@@ -89,7 +89,7 @@ export const putborder = () => {
     btnNewFolder.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const id = "folder-" + Math.random().toString(36).substr(2, 9);
+      const id = typeof crypto !== "undefined" && crypto.randomUUID ? `folder-${crypto.randomUUID()}` : "folder-" + Math.random().toString(36).slice(2, 11);
       const newFolder = createFolderUI(id, "New Folder", folderSkeleton);
       folderList.appendChild(newFolder);
       saveState();

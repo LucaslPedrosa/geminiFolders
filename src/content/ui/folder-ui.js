@@ -1,6 +1,7 @@
 import { runtime } from "../state/runtime.js";
 import { getAppState, saveState } from "../state/store.js";
 import { renderVirtualChats } from "./virtual-chats.js";
+import { SELECTORS } from "../config/selectors.js";
 
 const updateFolderChatCount = (folderNode) => {
   const countNode = folderNode.querySelector(".folder-chat-count");
@@ -24,6 +25,8 @@ export const applyChatDropToFolder = (chatData, folderNode) => {
 
   const appState = getAppState();
   const chatElement = document.getElementById(chatData.id);
+
+  if (!appState.chatMappings) appState.chatMappings = {};
 
   if (chatElement) {
     if (chatElement.dataset.folder === folderNode.id) {
@@ -63,6 +66,7 @@ export const createFolderUI = (id, name, folderSkeleton) => {
   newFolder.style.transition = "background-color 0.2s";
 
   const titleNode = newFolder.querySelector(".title-container");
+  if (!titleNode) return newFolder;
   titleNode.textContent = name;
   titleNode.style.paddingRight = "30px";
   titleNode.style.overflow = "hidden";
@@ -136,7 +140,7 @@ export const createFolderUI = (id, name, folderSkeleton) => {
     e.preventDefault();
     e.stopPropagation();
 
-    document.querySelectorAll(".conversation-items-container").forEach((chat) => {
+    document.querySelectorAll(SELECTORS.conversationItem).forEach((chat) => {
       if (chat.dataset.folder === newFolder.id) {
         delete chat.dataset.folder;
         chat.style.display = "flex";
@@ -161,27 +165,47 @@ export const createFolderUI = (id, name, folderSkeleton) => {
     e.stopPropagation();
     clearTimeout(clickTimer);
 
+    const previousTitle = titleNode.textContent;
+    let finished = false;
+
     titleNode.contentEditable = true;
     titleNode.focus();
     titleNode.style.outline = "1px solid white";
     titleNode.style.paddingRight = "5px";
     titleNode.style.cursor = "text";
 
-    const finishEdit = () => {
+    const finishEdit = ({ cancel } = { cancel: false }) => {
+      if (finished) return;
+      finished = true;
+
       titleNode.contentEditable = false;
       titleNode.style.outline = "none";
       titleNode.style.paddingRight = "30px";
       titleNode.style.cursor = "pointer";
+
+      if (cancel) {
+        titleNode.textContent = previousTitle;
+      }
+
+      const cleaned = (titleNode.textContent || "").trim();
+      titleNode.textContent = cleaned.length > 0 ? cleaned : "Untitled";
+
+      titleNode.removeEventListener("keydown", onKeyDown);
       saveState();
     };
 
-    titleNode.addEventListener("blur", finishEdit, { once: true });
-    titleNode.addEventListener("keydown", (event) => {
+    const onKeyDown = (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         finishEdit();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finishEdit({ cancel: true });
       }
-    });
+    };
+
+    titleNode.addEventListener("blur", finishEdit, { once: true });
+    titleNode.addEventListener("keydown", onKeyDown);
   });
 
   newFolder.addEventListener("dragover", (e) => {
@@ -217,8 +241,9 @@ export const createFolderUI = (id, name, folderSkeleton) => {
 
     if (e.detail === 1) {
       clickTimer = setTimeout(() => {
+        clickTimer = null;
         newFolder.isOpen = !newFolder.isOpen;
-        iconElement.textContent = newFolder.isOpen ? "folder_open" : "folder";
+        if (iconElement) iconElement.textContent = newFolder.isOpen ? "folder_open" : "folder";
 
         if (newFolder.isOpen && runtime.openFolder && runtime.openFolder !== newFolder) {
           runtime.openFolder.isOpen = false;
@@ -232,7 +257,7 @@ export const createFolderUI = (id, name, folderSkeleton) => {
         renderVirtualChats(newFolder);
         updateFolderChatCount(newFolder);
 
-        document.querySelectorAll(".conversation-items-container").forEach((chat) => {
+        document.querySelectorAll(SELECTORS.conversationItem).forEach((chat) => {
           if (newFolder.isOpen) {
             if (chat.dataset.folder !== newFolder.id) {
               chat.style.display = "none";

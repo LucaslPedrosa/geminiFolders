@@ -1,4 +1,5 @@
 export const migrateLegacyChatMappings = (state) => {
+  let didMigrate = false;
   for (const key in state.chatMappings) {
     if (typeof state.chatMappings[key] === "string") {
       state.chatMappings[key] = {
@@ -6,6 +7,9 @@ export const migrateLegacyChatMappings = (state) => {
         title: "Chat Recuperado",
         url: ""
       };
+      didMigrate = true;
     }
   }
+
+  return didMigrate;
 };
