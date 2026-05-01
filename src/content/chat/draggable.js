@@ -1,5 +1,5 @@
 import { runtime } from "../state/runtime.js";
-import { getAppState } from "../state/store.js";
+import { getAppState, saveState } from "../state/store.js";
 import { applyChatDropToFolder } from "../ui/folder-ui.js";
 import { SELECTORS } from "../config/selectors.js";
 
@@ -11,6 +11,53 @@ const DRAG_OFFSET_X = 18;
 const DRAG_OFFSET_Y = 18;
 const DRAG_START_THRESHOLD_PX = 5;
 let dragListenersAttached = false;
+
+let migrationSaveQueued = false;
+
+const normalizeUrl = (url) => {
+  if (!url || typeof url !== "string") return "";
+  try {
+    const parsed = new URL(url, location.href);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+};
+
+const fnv1a32 = (str) => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i += 1) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+};
+
+const getStableChatIdFromUrl = (href) => {
+  const cleaned = normalizeUrl(href);
+  if (!cleaned) return null;
+
+  try {
+    const url = new URL(cleaned, location.href);
+    const match = url.pathname.match(/\/app\/([^/?#]+)/i);
+    if (match && match[1]) return `chat-${match[1]}`;
+
+    // Fallback: stable hash of the full normalized URL
+    return `chat-${fnv1a32(url.pathname + url.search)}`;
+  } catch {
+    return `chat-${fnv1a32(cleaned)}`;
+  }
+};
+
+const queueMigrationSave = () => {
+  if (migrationSaveQueued) return;
+  migrationSaveQueued = true;
+  setTimeout(() => {
+    migrationSaveQueued = false;
+    saveState();
+  }, 250);
+};
 
 const removeActiveDragPreview = () => {
   if (activeDragPreview && activeDragPreview.parentNode) {
@@ -235,6 +282,13 @@ export const makeDraggable = () => {
   const appState = getAppState();
   const chats = document.querySelectorAll(SELECTORS.conversationItem);
 
+  const mappingUrlToId = new Map();
+  for (const mappedId of Object.keys(appState.chatMappings || {})) {
+    const info = appState.chatMappings[mappedId];
+    const urlKey = normalizeUrl(info && info.url ? info.url : "");
+    if (urlKey) mappingUrlToId.set(urlKey, mappedId);
+  }
+
   if (!dragListenersAttached) {
     document.addEventListener("pointermove", handlePointerMove, true);
     document.addEventListener("pointerup", handlePointerUp, true);
@@ -245,15 +299,33 @@ export const makeDraggable = () => {
   chats.forEach((chat) => {
     if (chat.dataset.gfConfigured === "1") return;
 
-    if (!chat.id) {
-      const link = chat.querySelector("a");
-      if (link && link.href) {
-        const match = link.href.match(/\/app\/([a-z0-9]+)/);
-        chat.id = match ? "chat-" + match[1] : "chat-" + btoa(link.href).substring(0, 15);
-      } else {
-        return;
+    const link = chat.querySelector(SELECTORS.conversationLink) || chat.querySelector("a[href]");
+    const href = link && link.href ? link.href : "";
+    const normalizedHref = normalizeUrl(href);
+    const stableId = href ? getStableChatIdFromUrl(href) : null;
+
+    if (!stableId) return;
+
+    // Migrate mapping keys (old IDs → stable ID) using URL as the join key.
+    const existingMappedIdForUrl = normalizedHref ? mappingUrlToId.get(normalizedHref) : null;
+    if (existingMappedIdForUrl && existingMappedIdForUrl !== stableId) {
+      if (!appState.chatMappings[stableId]) {
+        appState.chatMappings[stableId] = appState.chatMappings[existingMappedIdForUrl];
       }
+      delete appState.chatMappings[existingMappedIdForUrl];
+      queueMigrationSave();
     }
+
+    // If element already had an old ID with mapping, migrate that too.
+    if (chat.id && chat.id !== stableId && appState.chatMappings[chat.id]) {
+      if (!appState.chatMappings[stableId]) {
+        appState.chatMappings[stableId] = appState.chatMappings[chat.id];
+      }
+      delete appState.chatMappings[chat.id];
+      queueMigrationSave();
+    }
+
+    chat.id = stableId;
 
     if (appState.chatMappings[chat.id] && appState.chatMappings[chat.id].folder) {
       chat.dataset.folder = appState.chatMappings[chat.id].folder;
@@ -274,8 +346,8 @@ export const makeDraggable = () => {
       if (event.button !== 0) return;
       if (event.target && event.target.closest && event.target.closest(".mat-icon")) return;
 
-      const linkElement = chat.querySelector("a");
-      const titleElement = chat.querySelector(".title-container") || chat;
+      const linkElement = chat.querySelector(SELECTORS.conversationLink) || chat.querySelector("a[href]");
+      const titleElement = chat.querySelector(SELECTORS.conversationTitle) || chat.querySelector(SELECTORS.titleContainer) || chat;
 
       activeDragState = {
         pointerId: event.pointerId,

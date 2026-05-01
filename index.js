@@ -3,7 +3,10 @@
   var SELECTORS = {
     folderItem: ".folder-item",
     titleContainer: ".title-container",
+    conversationTitle: ".conversation-title",
+    conversationListContainer: ".conversations-container",
     conversationItem: ".conversation-items-container",
+    conversationLink: "a[data-test-id='conversation']",
     sideNavEntry: ".side-nav-entry-container",
     gemsListContainer: ".gems-list-container",
     sectionTitle: ".title-container.ng-trigger"
@@ -37,6 +40,130 @@
   };
 
   // src/content/ui/virtual-chats.js
+  var temporarilyUnfolderChats = (folder) => {
+    const appState2 = getAppState();
+    const moved = [];
+    const convList = document.querySelector(SELECTORS.conversationListContainer) || document.querySelector(SELECTORS.conversationItem)?.parentElement || document.body;
+    for (const id in appState2.chatMappings) {
+      const info = appState2.chatMappings[id];
+      if (!info || info.folder !== folder.id) continue;
+      const el = document.getElementById(id);
+      if (!el) continue;
+      moved.push({ el, parent: el.parentNode, nextSibling: el.nextSibling, folder: el.dataset.folder });
+      try {
+        delete el.dataset.folder;
+        convList.appendChild(el);
+        el.style.display = "flex";
+      } catch (e) {
+      }
+    }
+    return moved;
+  };
+  var restoreMovedChats = (moved) => {
+    if (!moved || !moved.length) return;
+    moved.forEach((rec) => {
+      try {
+        if (rec.parent && rec.parent.contains && rec.parent !== document.body) {
+          if (rec.nextSibling && rec.nextSibling.parentNode === rec.parent) rec.parent.insertBefore(rec.el, rec.nextSibling);
+          else rec.parent.appendChild(rec.el);
+        }
+        if (rec.folder) rec.el.dataset.folder = rec.folder;
+      } catch (e) {
+      }
+    });
+  };
+  var getScrollableAncestor = (node) => {
+    let current = node;
+    while (current && current !== document.body) {
+      const style = window.getComputedStyle(current);
+      const canScrollY = /(auto|scroll)/.test(style.overflowY);
+      if (canScrollY && current.scrollHeight > current.clientHeight) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+  };
+  var delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  var isRootScrollNode = (node) => {
+    return node === document.scrollingElement || node === document.documentElement || node === document.body;
+  };
+  var collectScrollTargets = (firstChatLink) => {
+    const candidates = [];
+    try {
+      const listContainer = document.querySelector(SELECTORS.conversationListContainer);
+      if (listContainer) candidates.push(listContainer);
+    } catch {
+    }
+    try {
+      const convoItems = document.querySelector(SELECTORS.conversationItem);
+      if (convoItems) candidates.push(convoItems);
+    } catch {
+    }
+    if (firstChatLink) {
+      const anc = getScrollableAncestor(firstChatLink);
+      if (anc) candidates.push(anc);
+    }
+    candidates.push(document.scrollingElement || document.documentElement, document.documentElement, document.body);
+    const seen = /* @__PURE__ */ new Set();
+    const targets = [];
+    for (const node of candidates) {
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+      targets.push(node);
+    }
+    return targets;
+  };
+  var scrollTargetToBottom = (target) => {
+    try {
+      if (!target) return;
+      if (isRootScrollNode(target)) {
+        const root = document.scrollingElement || document.documentElement;
+        const bottom2 = Math.max(root.scrollHeight, document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+        window.scrollTo(0, bottom2);
+        root.scrollTop = bottom2;
+        document.documentElement.scrollTop = bottom2;
+        if (document.body) document.body.scrollTop = bottom2;
+        return;
+      }
+      const bottom = target.scrollHeight;
+      target.scrollTop = bottom;
+      target.scrollTo?.(0, bottom);
+    } catch (e) {
+    }
+  };
+  var sendScrollSignals = (target, deltaY = 900) => {
+    try {
+      if (!target) return;
+      const rect = target.getBoundingClientRect?.() || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+      const clientX = Math.floor(rect.left + (rect.width || window.innerWidth) / 2);
+      const clientY = Math.floor(rect.top + (rect.height || window.innerHeight) / 2);
+      const wheel = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaX: 0,
+        deltaY,
+        deltaMode: 0,
+        clientX,
+        clientY,
+        view: window
+      });
+      target.dispatchEvent(wheel);
+      target.dispatchEvent(new Event("scroll", { bubbles: true }));
+      window.dispatchEvent(new Event("scroll"));
+    } catch (e) {
+    }
+  };
+  var getMissingChatsInFolder = (folderId) => {
+    const appStateNow = getAppState();
+    let missing = 0;
+    for (const id in appStateNow.chatMappings) {
+      const info = appStateNow.chatMappings[id];
+      if (!info || info.folder !== folderId) continue;
+      if (!document.getElementById(id)) missing += 1;
+    }
+    return missing;
+  };
   var renderVirtualChats = (folder) => {
     const appState2 = getAppState();
     let virtualContainer = folder.querySelector(".virtual-chat-container");
@@ -49,6 +176,8 @@
     }
     virtualContainer.innerHTML = "";
     virtualContainer.style.display = folder.isOpen ? "block" : "none";
+    let missingCount = 0;
+    let loadedCount = 0;
     for (const chatId in appState2.chatMappings) {
       const chatInfo = appState2.chatMappings[chatId];
       if (!chatInfo || chatInfo.folder !== folder.id) continue;
@@ -56,31 +185,111 @@
       if (folder.isOpen) {
         if (domElement) {
           domElement.style.display = "flex";
+          loadedCount += 1;
         } else {
-          const fakeChat = document.createElement("a");
-          fakeChat.href = chatInfo.url;
-          fakeChat.textContent = chatInfo.title;
-          fakeChat.style.display = "block";
-          fakeChat.style.padding = "10px 15px";
-          fakeChat.style.color = "#e3e3e3";
-          fakeChat.style.textDecoration = "none";
-          fakeChat.style.fontSize = "14px";
-          fakeChat.style.whiteSpace = "nowrap";
-          fakeChat.style.overflow = "hidden";
-          fakeChat.style.textOverflow = "ellipsis";
-          fakeChat.style.borderRadius = "8px";
-          fakeChat.style.marginTop = "2px";
-          fakeChat.addEventListener("mouseenter", () => {
-            fakeChat.style.backgroundColor = "rgba(255, 255, 255, 0.08)";
-          });
-          fakeChat.addEventListener("mouseleave", () => {
-            fakeChat.style.backgroundColor = "transparent";
-          });
-          virtualContainer.appendChild(fakeChat);
+          missingCount += 1;
         }
       } else if (domElement) {
         domElement.style.display = "none";
       }
+    }
+    if (folder.isOpen && missingCount > 0) {
+      const hint = document.createElement("button");
+      hint.type = "button";
+      hint.textContent = loadedCount > 0 ? `Load more chats (${missingCount} hidden)` : `Load more chats (${missingCount} in this folder)`;
+      hint.style.display = "flex";
+      hint.style.alignItems = "center";
+      hint.style.justifyContent = "center";
+      hint.style.gap = "6px";
+      hint.style.width = "100%";
+      hint.style.padding = "8px 12px";
+      hint.style.margin = "6px 8px 2px 0";
+      hint.style.borderRadius = "10px";
+      hint.style.border = "1px dashed rgba(255, 255, 255, 0.22)";
+      hint.style.background = "rgba(255, 255, 255, 0.04)";
+      hint.style.color = "#d7dad7";
+      hint.style.fontSize = "12px";
+      hint.style.fontWeight = "600";
+      hint.style.letterSpacing = "0.2px";
+      hint.style.userSelect = "none";
+      hint.style.cursor = "pointer";
+      hint.style.transition = "background 120ms ease, border-color 120ms ease";
+      hint.addEventListener("mouseenter", () => {
+        hint.style.background = "rgba(255, 255, 255, 0.08)";
+        hint.style.borderColor = "rgba(255, 255, 255, 0.4)";
+      });
+      hint.addEventListener("mouseleave", () => {
+        hint.style.background = "rgba(255, 255, 255, 0.04)";
+        hint.style.borderColor = "rgba(255, 255, 255, 0.22)";
+      });
+      hint.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const firstChatLink = document.querySelector(SELECTORS.conversationLink) || document.querySelector(SELECTORS.conversationItem + " a");
+        const moved = temporarilyUnfolderChats(folder);
+        const targets = collectScrollTargets(firstChatLink);
+        const maxAttempts = 14;
+        const holdDelayMs = 180;
+        const driveLoading = async () => {
+          for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            scheduleCoreController();
+            for (const target of targets) {
+              scrollTargetToBottom(target);
+              sendScrollSignals(target, attempt < 4 ? 1200 : 800);
+            }
+            renderVirtualChats(folder);
+            if (getMissingChatsInFolder(folder.id) === 0) {
+              break;
+            }
+            await delay(holdDelayMs + Math.min(attempt * 20, 120));
+          }
+        };
+        driveLoading().catch(() => {
+        }).finally(() => {
+          restoreMovedChats(moved);
+          scheduleCoreController();
+          renderVirtualChats(folder);
+        });
+      });
+      virtualContainer.appendChild(hint);
+      const OPEN_LIMIT = 12;
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.textContent = `Open hidden chats (${Math.min(missingCount, OPEN_LIMIT)})`;
+      openBtn.style.display = "flex";
+      openBtn.style.alignItems = "center";
+      openBtn.style.justifyContent = "center";
+      openBtn.style.width = "100%";
+      openBtn.style.padding = "8px 12px";
+      openBtn.style.margin = "6px 8px 6px 0";
+      openBtn.style.borderRadius = "10px";
+      openBtn.style.border = "1px solid rgba(255,255,255,0.06)";
+      openBtn.style.background = "rgba(255,255,255,0.02)";
+      openBtn.style.color = "#e3e3e3";
+      openBtn.style.fontSize = "12px";
+      openBtn.style.cursor = "pointer";
+      openBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const appStateNow = getAppState();
+        const missing = [];
+        for (const id in appStateNow.chatMappings) {
+          const info = appStateNow.chatMappings[id];
+          if (!info || info.folder !== folder.id) continue;
+          if (!document.getElementById(id) && info.url) missing.push(info.url);
+        }
+        if (missing.length === 0) return;
+        const toOpen = missing.slice(0, OPEN_LIMIT);
+        toOpen.forEach((u, idx) => {
+          setTimeout(() => {
+            try {
+              window.open(u, "_blank");
+            } catch (err) {
+            }
+          }, idx * 250);
+        });
+      });
+      virtualContainer.appendChild(openBtn);
     }
     if (!folder.isOpen && runtime.openFolder === folder) {
       runtime.openFolder = null;
@@ -370,6 +579,45 @@
   var DRAG_OFFSET_Y = 18;
   var DRAG_START_THRESHOLD_PX = 5;
   var dragListenersAttached = false;
+  var migrationSaveQueued = false;
+  var normalizeUrl = (url) => {
+    if (!url || typeof url !== "string") return "";
+    try {
+      const parsed = new URL(url, location.href);
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  };
+  var fnv1a32 = (str) => {
+    let hash = 2166136261;
+    for (let i = 0; i < str.length; i += 1) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  };
+  var getStableChatIdFromUrl = (href) => {
+    const cleaned = normalizeUrl(href);
+    if (!cleaned) return null;
+    try {
+      const url = new URL(cleaned, location.href);
+      const match = url.pathname.match(/\/app\/([^/?#]+)/i);
+      if (match && match[1]) return `chat-${match[1]}`;
+      return `chat-${fnv1a32(url.pathname + url.search)}`;
+    } catch {
+      return `chat-${fnv1a32(cleaned)}`;
+    }
+  };
+  var queueMigrationSave = () => {
+    if (migrationSaveQueued) return;
+    migrationSaveQueued = true;
+    setTimeout(() => {
+      migrationSaveQueued = false;
+      saveState();
+    }, 250);
+  };
   var removeActiveDragPreview = () => {
     if (activeDragPreview && activeDragPreview.parentNode) {
       activeDragPreview.parentNode.removeChild(activeDragPreview);
@@ -553,6 +801,12 @@
   var makeDraggable = () => {
     const appState2 = getAppState();
     const chats = document.querySelectorAll(SELECTORS.conversationItem);
+    const mappingUrlToId = /* @__PURE__ */ new Map();
+    for (const mappedId of Object.keys(appState2.chatMappings || {})) {
+      const info = appState2.chatMappings[mappedId];
+      const urlKey = normalizeUrl(info && info.url ? info.url : "");
+      if (urlKey) mappingUrlToId.set(urlKey, mappedId);
+    }
     if (!dragListenersAttached) {
       document.addEventListener("pointermove", handlePointerMove, true);
       document.addEventListener("pointerup", handlePointerUp, true);
@@ -561,15 +815,27 @@
     }
     chats.forEach((chat) => {
       if (chat.dataset.gfConfigured === "1") return;
-      if (!chat.id) {
-        const link = chat.querySelector("a");
-        if (link && link.href) {
-          const match = link.href.match(/\/app\/([a-z0-9]+)/);
-          chat.id = match ? "chat-" + match[1] : "chat-" + btoa(link.href).substring(0, 15);
-        } else {
-          return;
+      const link = chat.querySelector(SELECTORS.conversationLink) || chat.querySelector("a[href]");
+      const href = link && link.href ? link.href : "";
+      const normalizedHref = normalizeUrl(href);
+      const stableId = href ? getStableChatIdFromUrl(href) : null;
+      if (!stableId) return;
+      const existingMappedIdForUrl = normalizedHref ? mappingUrlToId.get(normalizedHref) : null;
+      if (existingMappedIdForUrl && existingMappedIdForUrl !== stableId) {
+        if (!appState2.chatMappings[stableId]) {
+          appState2.chatMappings[stableId] = appState2.chatMappings[existingMappedIdForUrl];
         }
+        delete appState2.chatMappings[existingMappedIdForUrl];
+        queueMigrationSave();
       }
+      if (chat.id && chat.id !== stableId && appState2.chatMappings[chat.id]) {
+        if (!appState2.chatMappings[stableId]) {
+          appState2.chatMappings[stableId] = appState2.chatMappings[chat.id];
+        }
+        delete appState2.chatMappings[chat.id];
+        queueMigrationSave();
+      }
+      chat.id = stableId;
       if (appState2.chatMappings[chat.id] && appState2.chatMappings[chat.id].folder) {
         chat.dataset.folder = appState2.chatMappings[chat.id].folder;
       }
@@ -585,8 +851,8 @@
       chat.addEventListener("pointerdown", (event) => {
         if (event.button !== 0) return;
         if (event.target && event.target.closest && event.target.closest(".mat-icon")) return;
-        const linkElement = chat.querySelector("a");
-        const titleElement = chat.querySelector(".title-container") || chat;
+        const linkElement = chat.querySelector(SELECTORS.conversationLink) || chat.querySelector("a[href]");
+        const titleElement = chat.querySelector(SELECTORS.conversationTitle) || chat.querySelector(SELECTORS.titleContainer) || chat;
         activeDragState = {
           pointerId: event.pointerId,
           startX: event.clientX,
