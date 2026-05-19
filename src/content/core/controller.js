@@ -33,10 +33,6 @@ export const scheduleCoreController = () => {
 };
 
 export const coreController = () => {
-  const el = document.querySelector(SELECTORS.gemsListContainer);
-  const items = document.querySelector(SELECTORS.sideNavEntry);
-  const cvs = document.querySelector(SELECTORS.sectionTitle);
-
   if (runtime.openFolder && !document.body.contains(runtime.openFolder)) {
     runtime.openFolder = null;
   }
@@ -45,9 +41,11 @@ export const coreController = () => {
   const folderList = document.getElementById(IDS.folderList);
   const isUIRendered = Boolean(folderSpace && folderList && document.body.contains(folderSpace) && document.body.contains(folderList));
 
-  if (el && items && cvs && !isUIRendered) {
+  if (!isUIRendered) {
     putborder();
-  } else if (!el || !items || !cvs) {
+  }
+
+  if (!document.getElementById(IDS.folderSpace)) {
     if (controllerRetryTimer) clearTimeout(controllerRetryTimer);
     controllerRetryTimer = setTimeout(() => {
       controllerRetryTimer = null;

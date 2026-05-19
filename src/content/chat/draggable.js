@@ -59,6 +59,100 @@ const queueMigrationSave = () => {
   }, 250);
 };
 
+export const openConversationActionsMenu = (chat) => {
+  if (!chat) return false;
+
+  const host = chat.querySelector(SELECTORS.conversationActionsMenuHost);
+  const nativeButton = host ? host.querySelector(":scope > button") : chat.querySelector(SELECTORS.conversationActionsMenuButton);
+
+  if (!nativeButton) return false;
+  nativeButton.click();
+  return true;
+};
+
+const getChatLink = (chat) => {
+  return chat.querySelector(SELECTORS.conversationLink) || chat.querySelector("a[href]");
+};
+
+const getChatTitleElement = (chat) => {
+  return chat.querySelector(SELECTORS.conversationTitle) || chat.querySelector(SELECTORS.titleContainer) || chat;
+};
+
+const getChatIdFromHref = (href) => {
+  return href ? getStableChatIdFromUrl(href) : null;
+};
+
+const alignTrailingContent = (trailingContent) => {
+  trailingContent.style.display = "inline-flex";
+  trailingContent.style.flexDirection = "row";
+  trailingContent.style.alignItems = "center";
+};
+
+const createMoveToFolderIcon = () => {
+  const svgNs = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNs, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.style.width = "18px";
+  svg.style.height = "18px";
+  svg.style.display = "block";
+  svg.style.fill = "currentColor";
+  svg.style.pointerEvents = "none";
+
+  const path = document.createElementNS(svgNs, "path");
+  path.setAttribute("d", "M10 4l2 2h8c1.1 0 2 .9 2 2v3h-2V8H11.17l-2-2H4v12h7v2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2h6zm8 8l4 4-4 4v-3h-6v-2h6v-3z");
+  svg.appendChild(path);
+
+  return svg;
+};
+
+const ensureChatTrailingTools = (chat) => {
+  const trailingContent = chat.querySelector(SELECTORS.conversationTrailingContent);
+  if (!trailingContent) return;
+
+  alignTrailingContent(trailingContent);
+
+  if (trailingContent.querySelector(".gf-chat-folder-action")) return;
+
+  const actionButton = document.createElement("button");
+  actionButton.type = "button";
+  actionButton.className = "gf-chat-folder-action";
+  actionButton.title = "Drag to a folder";
+  actionButton.setAttribute("aria-label", "Drag chat to a folder");
+  actionButton.style.display = "inline-flex";
+  actionButton.style.alignItems = "center";
+  actionButton.style.justifyContent = "center";
+  actionButton.style.width = "32px";
+  actionButton.style.height = "32px";
+  actionButton.style.padding = "0";
+  actionButton.style.border = "0";
+  actionButton.style.borderRadius = "50%";
+  actionButton.style.background = "transparent";
+  actionButton.style.color = "inherit";
+  actionButton.style.cursor = "grab";
+  actionButton.style.flex = "0 0 auto";
+
+  actionButton.appendChild(createMoveToFolderIcon());
+
+  actionButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  actionButton.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openConversationActionsMenu(chat);
+  });
+
+  const nativeMenuHost = trailingContent.querySelector(SELECTORS.conversationActionsMenuHost);
+  if (nativeMenuHost && nativeMenuHost.parentNode === trailingContent) {
+    trailingContent.insertBefore(actionButton, nativeMenuHost);
+  } else {
+    trailingContent.appendChild(actionButton);
+  }
+};
+
 const removeActiveDragPreview = () => {
   if (activeDragPreview && activeDragPreview.parentNode) {
     activeDragPreview.parentNode.removeChild(activeDragPreview);
@@ -297,14 +391,20 @@ export const makeDraggable = () => {
   }
 
   chats.forEach((chat) => {
-    if (chat.dataset.gfConfigured === "1") return;
+    ensureChatTrailingTools(chat);
 
-    const link = chat.querySelector(SELECTORS.conversationLink) || chat.querySelector("a[href]");
+    const link = getChatLink(chat);
     const href = link && link.href ? link.href : "";
     const normalizedHref = normalizeUrl(href);
-    const stableId = href ? getStableChatIdFromUrl(href) : null;
+    const stableId = getChatIdFromHref(href);
 
     if (!stableId) return;
+
+    if (chat.dataset.gfConfigured === "1" && chat.dataset.gfStableId === stableId) return;
+
+    if (chat.dataset.gfConfigured === "1" && chat.dataset.gfStableId !== stableId) {
+      chat.dataset.gfConfigured = "0";
+    }
 
     // Migrate mapping keys (old IDs → stable ID) using URL as the join key.
     const existingMappedIdForUrl = normalizedHref ? mappingUrlToId.get(normalizedHref) : null;
@@ -326,6 +426,7 @@ export const makeDraggable = () => {
     }
 
     chat.id = stableId;
+    chat.dataset.gfStableId = stableId;
 
     if (appState.chatMappings[chat.id] && appState.chatMappings[chat.id].folder) {
       chat.dataset.folder = appState.chatMappings[chat.id].folder;
@@ -344,10 +445,11 @@ export const makeDraggable = () => {
 
     chat.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
-      if (event.target && event.target.closest && event.target.closest(".mat-icon")) return;
+      if (event.target && event.target.closest && event.target.closest(SELECTORS.conversationActionsMenuHost)) return;
+      if (event.target && event.target.closest && event.target.closest(".mat-icon:not(.gf-chat-folder-action .mat-icon)")) return;
 
-      const linkElement = chat.querySelector(SELECTORS.conversationLink) || chat.querySelector("a[href]");
-      const titleElement = chat.querySelector(SELECTORS.conversationTitle) || chat.querySelector(SELECTORS.titleContainer) || chat;
+      const linkElement = getChatLink(chat);
+      const titleElement = getChatTitleElement(chat);
 
       activeDragState = {
         pointerId: event.pointerId,

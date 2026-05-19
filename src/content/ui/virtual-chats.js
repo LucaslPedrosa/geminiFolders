@@ -159,7 +159,7 @@ export const renderVirtualChats = (folder) => {
     folder.appendChild(virtualContainer);
   }
 
-  virtualContainer.innerHTML = "";
+  virtualContainer.replaceChildren();
   virtualContainer.style.display = folder.isOpen ? "block" : "none";
 
   let missingCount = 0;
